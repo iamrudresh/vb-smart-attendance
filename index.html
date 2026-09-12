@@ -51,19 +51,28 @@
     }
 
     async function setupFaceMatcher() {
-      // Register reference students (URLs must allow CORS, e.g., GitHub raw or Imgur direct link)
       const students = [
-        { name: "Student_01", imgUrl: "https://raw.githubusercontent.com/iamrudresh/vb-smart-attendance/main/student1.jpg" }
+        { name: "Rudresh Sahu", imgUrl: "./student1.jpg" }
       ];
 
-      const labeledDescriptors = await Promise.all(
-        students.map(async (student) => {
+      const labeledDescriptors = [];
+
+      for (const student of students) {
+        try {
           const img = await faceapi.fetchImage(student.imgUrl);
           const detection = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
-          return new faceapi.LabeledFaceDescriptors(student.name, [detection.descriptor]);
-        })
-      );
+          
+          if (detection) {
+            labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(student.name, [detection.descriptor]));
+          } else {
+            statusText.innerText = "Error: No face found in student1.jpg";
+          }
+        } catch (err) {
+          statusText.innerText = "Error loading photo: " + err.message;
+        }
+      }
 
+      if (labeledDescriptors.length === 0) return null;
       return new faceapi.FaceMatcher(labeledDescriptors, 0.6);
     }
 
