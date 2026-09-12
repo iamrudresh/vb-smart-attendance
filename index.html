@@ -6,41 +6,63 @@
   <title>IoT Virtual Biometric Attendance</title>
   <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; background: #0f172a; color: white; margin: 0; padding: 20px; }
-    .video-container { position: relative; width: 340px; height: 255px; border-radius: 12px; overflow: hidden; border: 2px solid #38bdf8; background: #000; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; background: #0f172a; color: white; margin: 0; padding: 20px; }
+    .camera-wrapper { position: relative; width: 480px; height: 360px; border-radius: 12px; overflow: hidden; border: 2px solid #38bdf8; background: #000; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
     video { width: 100%; height: 100%; object-fit: cover; }
-    #status { margin-top: 15px; font-weight: bold; color: #38bdf8; text-align: center; max-width: 340px; }
-    .log-box { margin-top: 15px; background: #1e293b; padding: 12px; border-radius: 8px; width: 320px; font-size: 13px; min-height: 40px; }
+    canvas { position: absolute; top: 0; left: 0; }
+    #status { margin-top: 15px; font-weight: 600; font-size: 16px; color: #38bdf8; text-align: center; min-height: 24px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; font-size: 12px; margin-top: 6px; }
+    .badge-ok { background: #16a34a; color: white; }
+    .badge-warn { background: #dc2626; color: white; }
+    .log-box { margin-top: 15px; background: #1e293b; padding: 12px; border-radius: 8px; width: 450px; font-size: 13px; max-height: 120px; overflow-y: auto; border: 1px solid #334155; }
     .btn { margin-top: 12px; background: #38bdf8; color: #0f172a; border: none; padding: 10px 18px; border-radius: 6px; font-weight: bold; cursor: pointer; }
   </style>
 </head>
 <body>
 
   <h2>Smart Attendance System</h2>
-  <div class="video-container">
+  <div class="camera-wrapper">
     <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
   </div>
-  <div id="status">Starting camera...</div>
+  
+  <div id="status">Initializing AI neural models...</div>
   <button id="registerBtn" class="btn" style="display:none;" onclick="registerFace()">Register My Face</button>
   <div class="log-box" id="logs">Waiting for system init...</div>
 
   <script>
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwi3mfDwl5NxjBH06LX7sFzgnNz52_t-EUb-9KppbD9nodXjsdfsTcDj7mq00lYgYpM/exec";
-    const STUDENT_NAME = "Rudresh Sahu";
 
     const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
     const statusText = document.getElementById('status');
     const logBox = document.getElementById('logs');
     const registerBtn = document.getElementById('registerBtn');
-    
+
     let markedStudents = new Set();
     let faceMatcher = null;
+    let consecutiveMatches = 0;
+    const REQUIRED_STABLE_FRAMES = 3;
+    let lastLoggedTime = 0;
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playBeep(freq, type, duration) {
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
+      osc.stop(audioCtx.currentTime + duration);
+    }
 
     async function init() {
       const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
-      
       try {
-        statusText.innerText = "Loading AI models (10-15s)...";
+        statusText.innerText = "Loading AI models...";
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -51,68 +73,93 @@
         await tryLoadPreloadedPhoto();
       } catch (err) {
         statusText.innerText = "Init Error: " + err.message;
-        console.error(err);
       }
     }
 
     async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } 
-        });
-        video.srcObject = stream;
-        statusText.innerText = "Camera active. Loading reference...";
-      } catch (err) {
-        statusText.innerText = "Camera permission denied or not found.";
-        throw err;
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+      });
+      video.srcObject = stream;
+      return new Promise(resolve => video.onloadedmetadata = () => {
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        resolve();
+      });
     }
 
     async function tryLoadPreloadedPhoto() {
-      try {
-        const img = await faceapi.fetchImage('./student1.jpg');
-        const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-                                       .withFaceLandmarks()
-                                       .withFaceDescriptor();
+      const enrolledStudents = [
+        { name: "Rudresh Sahu", imgUrl: "./student1.jpg" },
+        { name: "Tanmay Sanap", imgUrl: "./student2.jpg" }
+      ];
 
-        if (detection) {
-          const labeledDesc = new faceapi.LabeledFaceDescriptors(STUDENT_NAME, [detection.descriptor]);
-          faceMatcher = new faceapi.FaceMatcher([labeledDesc], 0.55);
-          statusText.innerText = "System Ready! Align face to verify.";
-          startAttendanceLoop();
-        } else {
-          fallbackToManualRegister("Face not clear in student1.jpg.");
+      const labeledDescriptors = [];
+      statusText.innerText = "Enrolling registered student faces...";
+
+      for (const student of enrolledStudents) {
+        try {
+          const img = await faceapi.fetchImage(student.imgUrl);
+          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                                         .withFaceLandmarks()
+                                         .withFaceDescriptor();
+
+          if (detection) {
+            labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(student.name, [detection.descriptor]));
+            logBox.innerHTML += `<div>Enrolled: <b>${student.name}</b></div>`;
+          } else {
+            console.warn(`Face landmark extraction failed for: ${student.name}`);
+          }
+        } catch (e) {
+          console.warn(`Could not load image at ${student.imgUrl}`);
         }
-      } catch (e) {
-        fallbackToManualRegister("Could not load student1.jpg.");
+      }
+
+      if (labeledDescriptors.length > 0) {
+        faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, 0.50);
+        statusText.innerText = `Ready (${labeledDescriptors.length} students enrolled). Align face.`;
+        startAttendanceLoop();
+      } else {
+        fallbackToManualRegister("No reference faces found.");
       }
     }
 
     function fallbackToManualRegister(reason) {
-      statusText.innerText = reason + " Look at camera & click button below:";
+      statusText.innerText = reason + " Look at camera and click below:";
       registerBtn.style.display = "inline-block";
     }
 
     async function registerFace() {
-      statusText.innerText = "Scanning face from camera...";
+      const studentName = prompt("Enter Student Name:", "New Student");
+      if (!studentName) return;
+
       const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
                                      .withFaceLandmarks()
                                      .withFaceDescriptor();
-
       if (!detection) {
         statusText.innerText = "No face detected. Stay still and try again!";
+        playBeep(250, 'sawtooth', 0.2);
         return;
       }
-
-      const labeledDesc = new faceapi.LabeledFaceDescriptors(STUDENT_NAME, [detection.descriptor]);
-      faceMatcher = new faceapi.FaceMatcher([labeledDesc], 0.55);
-      
+      const labeledDesc = new faceapi.LabeledFaceDescriptors(studentName, [detection.descriptor]);
+      faceMatcher = new faceapi.FaceMatcher([labeledDesc], 0.50);
       registerBtn.style.display = "none";
-      statusText.innerText = "Face registered! Running attendance...";
+      statusText.innerText = `Face registered for ${studentName}! Starting loop...`;
+      playBeep(880, 'sine', 0.2);
       startAttendanceLoop();
     }
 
+    function calculateEyeAspectRatio(eye) {
+      const vertical1 = Math.hypot(eye[1].x - eye[5].x, eye[1].y - eye[5].y);
+      const vertical2 = Math.hypot(eye[2].x - eye[4].x, eye[2].y - eye[4].y);
+      const horizontal = Math.hypot(eye[0].x - eye[3].x, eye[0].y - eye[3].y);
+      return (vertical1 + vertical2) / (2.0 * horizontal);
+    }
+
     function startAttendanceLoop() {
+      const displaySize = { width: video.videoWidth, height: video.videoHeight };
+      faceapi.matchDimensions(overlay, displaySize);
+
       setInterval(async () => {
         if (!faceMatcher) return;
 
@@ -120,31 +167,72 @@
                                         .withFaceLandmarks()
                                         .withFaceDescriptors();
 
+        const ctx = overlay.getContext('2d');
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
         if (detections.length === 0) {
-          statusText.innerText = "No face detected in camera.";
+          statusText.innerText = "Searching for face...";
+          consecutiveMatches = 0;
           return;
         }
 
-        for (const d of detections) {
-          const match = faceMatcher.findBestMatch(d.descriptor);
+        const resizedDetections = faceapi.resizeResults(detections, displaySize);
 
-          if (match.label === 'unknown') {
-            statusText.innerText = "Face not recognized";
-          } else {
-            if (!markedStudents.has(match.label)) {
-              markedStudents.add(match.label);
-              logAttendance(match.label);
-            } else {
-              statusText.innerText = `Attendance already marked for ${match.label}`;
+        for (let i = 0; i < resizedDetections.length; i++) {
+          const d = resizedDetections[i];
+          const match = faceMatcher.findBestMatch(d.descriptor);
+          const box = d.detection.box;
+
+          const landmarks = d.landmarks;
+          const leftEAR = calculateEyeAspectRatio(landmarks.getLeftEye());
+          const rightEAR = calculateEyeAspectRatio(landmarks.getRightEye());
+          const isEyesOpen = (leftEAR + rightEAR) / 2 > 0.20;
+
+          let boxColor = '#dc2626';
+          let labelText = `Unknown (${(1 - match.distance).toFixed(2)})`;
+
+          if (match.label !== 'unknown') {
+            boxColor = '#16a34a';
+            labelText = `${match.label} [${(1 - match.distance).toFixed(2)}]`;
+
+            if (isEyesOpen) {
+              consecutiveMatches++;
             }
+
+            if (consecutiveMatches >= REQUIRED_STABLE_FRAMES) {
+              const now = Date.now();
+              if (!markedStudents.has(match.label)) {
+                markedStudents.add(match.label);
+                lastLoggedTime = now;
+                playBeep(950, 'sine', 0.25);
+                logAttendance(match.label);
+              } else if (now - lastLoggedTime > 10000) {
+                statusText.innerText = `Attendance already logged for ${match.label}`;
+              }
+            }
+          } else {
+            consecutiveMatches = 0;
+            statusText.innerText = "Unauthorized / Unrecognized Person";
+            playBeep(220, 'sawtooth', 0.1);
           }
+
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = boxColor;
+          ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+          ctx.fillStyle = boxColor;
+          ctx.fillRect(box.x, box.y - 25, box.width, 25);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '14px Arial';
+          ctx.fillText(labelText, box.x + 5, box.y - 7);
         }
-      }, 1500);
+      }, 700);
     }
 
     async function logAttendance(studentName) {
-      statusText.innerText = `Recognized: ${studentName}! Logging...`;
+      statusText.innerHTML = `<span class="badge badge-ok">VERIFIED</span> Attendance logged for ${studentName}!`;
       logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Verified: <b>${studentName}</b></div>`;
+      logBox.scrollTop = logBox.scrollHeight;
 
       try {
         await fetch(GOOGLE_SCRIPT_URL, {
@@ -153,7 +241,6 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: studentName, status: "Present" })
         });
-        statusText.innerText = `Attendance successfully recorded for ${studentName}!`;
       } catch (err) {
         logBox.innerHTML += `<div style="color:red">Failed to write to Google Sheet.</div>`;
       }
