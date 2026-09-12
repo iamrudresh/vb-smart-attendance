@@ -3,50 +3,187 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IoT Virtual Biometric Attendance</title>
+  <title>Smart Biometric Attendance Kiosk</title>
   <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
   <style>
-    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; background: #0f172a; color: white; margin: 0; padding: 20px; }
-    .camera-wrapper { position: relative; width: 480px; height: 360px; border-radius: 12px; overflow: hidden; border: 2px solid #38bdf8; background: #000; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-    video { width: 100%; height: 100%; object-fit: cover; }
-    canvas { position: absolute; top: 0; left: 0; }
-    #status { margin-top: 15px; font-weight: 600; font-size: 16px; color: #38bdf8; text-align: center; min-height: 24px; }
-    .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; font-size: 12px; margin-top: 6px; }
-    .badge-ok { background: #16a34a; color: white; }
-    .badge-warn { background: #dc2626; color: white; }
-    .log-box { margin-top: 15px; background: #1e293b; padding: 12px; border-radius: 8px; width: 450px; font-size: 13px; max-height: 120px; overflow-y: auto; border: 1px solid #334155; }
-    .btn { margin-top: 12px; background: #38bdf8; color: #0f172a; border: none; padding: 10px 18px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+    :root {
+      --primary: #38bdf8;
+      --success: #10b981;
+      --danger: #f43f5e;
+      --bg: #0b0f19;
+      --card: rgba(17, 24, 39, 0.7);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: radial-gradient(circle at top, #1e293b, var(--bg));
+      color: #f8fafc;
+      margin: 0;
+      padding: 20px;
+    }
+
+    .title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 20px;
+      color: #f8fafc;
+    }
+
+    .scanner-viewport {
+      position: relative;
+      width: 360px;
+      height: 460px;
+      border-radius: 28px;
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.8),
+                  0 0 0 1px rgba(255, 255, 255, 0.08);
+      transition: box-shadow 0.4s ease;
+    }
+
+    /* Ambient Outer Border Glow States */
+    .scanner-viewport.searching {
+      box-shadow: 0 0 30px -5px rgba(56, 189, 248, 0.3), 0 0 0 2px var(--primary);
+    }
+    .scanner-viewport.verified {
+      box-shadow: 0 0 35px 0px rgba(16, 185, 129, 0.5), 0 0 0 2px var(--success);
+    }
+    .scanner-viewport.denied {
+      box-shadow: 0 0 35px 0px rgba(244, 63, 94, 0.5), 0 0 0 2px var(--danger);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* Mirror camera for natural UI feedback */
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: scaleX(-1); /* Align overlay with mirrored video */
+    }
+
+    /* Fixed Face Reticle Overlay */
+    .reticle-mask {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .reticle-frame {
+      width: 230px;
+      height: 300px;
+      border-radius: 90px;
+      position: relative;
+      border: 2px dashed rgba(255, 255, 255, 0.25);
+      transition: border-color 0.3s ease;
+    }
+
+    .searching .reticle-frame { border-color: rgba(56, 189, 248, 0.6); }
+    .verified .reticle-frame { border-color: var(--success); border-style: solid; }
+    .denied .reticle-frame { border-color: var(--danger); border-style: solid; }
+
+    /* Laser Scanner Beam */
+    .laser {
+      position: absolute;
+      top: 0;
+      left: 10%;
+      width: 80%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      box-shadow: 0 0 12px var(--primary);
+      opacity: 0;
+      animation: scan 2.4s infinite ease-in-out;
+    }
+
+    .searching .laser { opacity: 1; }
+
+    @keyframes scan {
+      0% { top: 15%; opacity: 0; }
+      20% { opacity: 1; }
+      80% { opacity: 1; }
+      100% { top: 85%; opacity: 0; }
+    }
+
+    /* HUD Bottom Card */
+    .hud-card {
+      margin-top: 18px;
+      width: 360px;
+      background: var(--card);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 18px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    #status {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--primary);
+      transition: color 0.3s ease;
+    }
+
+    .log-tray {
+      margin-top: 12px;
+      max-height: 90px;
+      overflow-y: auto;
+      font-size: 12px;
+      color: #94a3b8;
+      text-align: left;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      padding-top: 8px;
+    }
   </style>
 </head>
 <body>
 
-  <h2>Smart Attendance System</h2>
-  <div class="camera-wrapper">
+  <div class="title">Biometric Attendance Terminal</div>
+
+  <div class="scanner-viewport searching" id="viewport">
     <video id="video" autoplay muted playsinline></video>
     <canvas id="overlay"></canvas>
+    <div class="reticle-mask">
+      <div class="reticle-frame">
+        <div class="laser"></div>
+      </div>
+    </div>
   </div>
-  
-  <div id="status">Initializing AI neural models...</div>
-  <button id="registerBtn" class="btn" style="display:none;" onclick="registerFace()">Register My Face</button>
-  <div class="log-box" id="logs">Waiting for system init...</div>
+
+  <div class="hud-card">
+    <div id="status">Starting camera...</div>
+    <div class="log-tray" id="logs">Terminal initialized.</div>
+  </div>
 
   <script>
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwi3mfDwl5NxjBH06LX7sFzgnNz52_t-EUb-9KppbD9nodXjsdfsTcDj7mq00lYgYpM/exec";
-    const STUDENT_NAME = "Rudresh Sahu";
 
     const video = document.getElementById('video');
     const overlay = document.getElementById('overlay');
+    const viewport = document.getElementById('viewport');
     const statusText = document.getElementById('status');
     const logBox = document.getElementById('logs');
-    const registerBtn = document.getElementById('registerBtn');
 
     let markedStudents = new Set();
     let faceMatcher = null;
     let consecutiveMatches = 0;
-    const REQUIRED_STABLE_FRAMES = 3; // Must confirm match across 3 consecutive scans
+    const REQUIRED_STABLE_FRAMES = 3;
     let lastLoggedTime = 0;
 
-    // Web Audio Synthesizer for alerts without external audio assets
+    // Web Audio Synthesizer
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     function playBeep(freq, type, duration) {
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -64,7 +201,7 @@
     async function init() {
       const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
       try {
-        statusText.innerText = "Loading AI models...";
+        statusText.innerText = "Loading neural models...";
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -72,72 +209,77 @@
         ]);
 
         await startCamera();
-        await tryLoadPreloadedPhoto();
+        await loadEnrolledStudents();
       } catch (err) {
         statusText.innerText = "Init Error: " + err.message;
       }
     }
 
-    async function startCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
-      });
-      video.srcObject = stream;
-      return new Promise(resolve => video.onloadedmetadata = () => {
-        overlay.width = video.videoWidth;
-        overlay.height = video.videoHeight;
-        resolve();
+    function startCamera() {
+      return new Promise((resolve, reject) => {
+        navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+        })
+        .then(stream => {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            video.play();
+            overlay.width = video.videoWidth;
+            overlay.height = video.videoHeight;
+            resolve();
+          };
+        })
+        .catch(err => {
+          statusText.innerText = "Camera Denied: " + err.message;
+          reject(err);
+        });
       });
     }
 
-    async function tryLoadPreloadedPhoto() {
-      try {
-        const img = await faceapi.fetchImage('./student1.jpg');
-        const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
-                                       .withFaceLandmarks()
-                                       .withFaceDescriptor();
+    async function loadEnrolledStudents() {
+      const enrolledStudents = [
+        { name: "Rudresh Sahu", imgUrl: "./student1.jpg" },
+        { name: "Tanmay Sanap", imgUrl: "./student2.jpg" }
+      ];
 
-        if (detection) {
-          const labeledDesc = new faceapi.LabeledFaceDescriptors(STUDENT_NAME, [detection.descriptor]);
-          faceMatcher = new faceapi.FaceMatcher([labeledDesc], 0.50); // Strict euclidean distance threshold
-          statusText.innerText = "System Ready. Align your face.";
-          startAttendanceLoop();
-        } else {
-          fallbackToManualRegister("Face unreadable in student1.jpg.");
+      const labeledDescriptors = [];
+      statusText.innerText = "Calibrating biometric database...";
+
+      for (const student of enrolledStudents) {
+        try {
+          const img = await faceapi.fetchImage(student.imgUrl);
+          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+                                         .withFaceLandmarks()
+                                         .withFaceDescriptor();
+          if (detection) {
+            labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(student.name, [detection.descriptor]));
+            logBox.innerHTML += `<div>Enrolled: <b>${student.name}</b></div>`;
+          }
+        } catch (e) {
+          console.warn("Could not load " + student.imgUrl);
         }
-      } catch (e) {
-        fallbackToManualRegister("Reference image student1.jpg not found.");
       }
-    }
 
-    function fallbackToManualRegister(reason) {
-      statusText.innerText = reason + " Look at camera and click below:";
-      registerBtn.style.display = "inline-block";
-    }
-
-    async function registerFace() {
-      const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-                                     .withFaceLandmarks()
-                                     .withFaceDescriptor();
-      if (!detection) {
-        statusText.innerText = "No face detected. Stay still and try again!";
-        playBeep(250, 'sawtooth', 0.2);
-        return;
+      if (labeledDescriptors.length > 0) {
+        faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, 0.50);
+        statusText.innerText = "Position face within frame";
+        startAttendanceLoop();
+      } else {
+        statusText.innerText = "No student profiles found.";
       }
-      const labeledDesc = new faceapi.LabeledFaceDescriptors(STUDENT_NAME, [detection.descriptor]);
-      faceMatcher = new faceapi.FaceMatcher([labeledDesc], 0.50);
-      registerBtn.style.display = "none";
-      statusText.innerText = "Face registered. Starting loop...";
-      playBeep(880, 'sine', 0.2);
-      startAttendanceLoop();
     }
 
     function calculateEyeAspectRatio(eye) {
-      // Euclidean distance of vertical landmarks / horizontal landmarks
       const vertical1 = Math.hypot(eye[1].x - eye[5].x, eye[1].y - eye[5].y);
       const vertical2 = Math.hypot(eye[2].x - eye[4].x, eye[2].y - eye[4].y);
       const horizontal = Math.hypot(eye[0].x - eye[3].x, eye[0].y - eye[3].y);
       return (vertical1 + vertical2) / (2.0 * horizontal);
+    }
+
+    function setTerminalState(state, message, color) {
+      viewport.className = `scanner-viewport ${state}`;
+      statusText.innerText = message;
+      statusText.style.color = color;
     }
 
     function startAttendanceLoop() {
@@ -145,7 +287,7 @@
       faceapi.matchDimensions(overlay, displaySize);
 
       setInterval(async () => {
-        if (!faceMatcher) return;
+        if (!faceMatcher || video.paused || video.ended) return;
 
         const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
                                         .withFaceLandmarks()
@@ -155,69 +297,56 @@
         ctx.clearRect(0, 0, overlay.width, overlay.height);
 
         if (detections.length === 0) {
-          statusText.innerText = "Searching for face...";
+          setTerminalState('searching', 'Position face inside the frame', '#38bdf8');
           consecutiveMatches = 0;
           return;
         }
 
         const resizedDetections = faceapi.resizeResults(detections, displaySize);
 
-        for (let i = 0; i < resizedDetections.length; i++) {
-          const d = resizedDetections[i];
+        for (const d of resizedDetections) {
           const match = faceMatcher.findBestMatch(d.descriptor);
-          const box = d.detection.box;
-
-          // Compute Eye Aspect Ratio for basic anti-spoofing awareness
           const landmarks = d.landmarks;
           const leftEAR = calculateEyeAspectRatio(landmarks.getLeftEye());
           const rightEAR = calculateEyeAspectRatio(landmarks.getRightEye());
           const isEyesOpen = (leftEAR + rightEAR) / 2 > 0.20;
 
-          let boxColor = '#dc2626';
-          let labelText = `Unknown (${(1 - match.distance).toFixed(2)})`;
+          // Draw minimalist landmark points instead of a bulky box
+          ctx.fillStyle = match.label === 'unknown' ? 'rgba(244, 63, 94, 0.7)' : 'rgba(16, 185, 129, 0.7)';
+          landmarks.positions.forEach(pt => {
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 1.5, 0, 2 * Math.PI);
+            ctx.fill();
+          });
 
           if (match.label !== 'unknown') {
-            boxColor = '#16a34a';
-            labelText = `${match.label} [${(1 - match.distance).toFixed(2)}]`;
-
-            if (isEyesOpen) {
-              consecutiveMatches++;
-            }
+            if (isEyesOpen) consecutiveMatches++;
 
             if (consecutiveMatches >= REQUIRED_STABLE_FRAMES) {
               const now = Date.now();
               if (!markedStudents.has(match.label)) {
                 markedStudents.add(match.label);
                 lastLoggedTime = now;
-                playBeep(950, 'sine', 0.25);
+                setTerminalState('verified', `Verified: ${match.label}`, '#10b981');
+                playBeep(880, 'sine', 0.2);
                 logAttendance(match.label);
-              } else if (now - lastLoggedTime > 10000) {
-                statusText.innerText = `Attendance already logged for ${match.label}`;
+              } else if (now - lastLoggedTime > 5000) {
+                setTerminalState('verified', `Already Marked: ${match.label}`, '#10b981');
               }
+            } else {
+              setTerminalState('searching', 'Authenticating...', '#38bdf8');
             }
           } else {
             consecutiveMatches = 0;
-            statusText.innerText = "Unauthorized / Unrecognized Person";
-            playBeep(220, 'sawtooth', 0.1);
+            setTerminalState('denied', 'Access Denied: Unrecognized Person', '#f43f5e');
+            playBeep(220, 'sawtooth', 0.08);
           }
-
-          // Render on-screen HUD box
-          ctx.lineWidth = 3;
-          ctx.strokeStyle = boxColor;
-          ctx.strokeRect(box.x, box.y, box.width, box.height);
-
-          ctx.fillStyle = boxColor;
-          ctx.fillRect(box.x, box.y - 25, box.width, 25);
-          ctx.fillStyle = '#ffffff';
-          ctx.font = '14px Arial';
-          ctx.fillText(labelText, box.x + 5, box.y - 7);
         }
-      }, 700); // 700ms provides high responsiveness while preserving mobile battery
+      }, 500);
     }
 
     async function logAttendance(studentName) {
-      statusText.innerHTML = `<span class="badge badge-ok">VERIFIED</span> Attendance logged for ${studentName}!`;
-      logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Verified: <b>${studentName}</b></div>`;
+      logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] Recorded: <b>${studentName}</b></div>`;
       logBox.scrollTop = logBox.scrollHeight;
 
       try {
@@ -228,7 +357,7 @@
           body: JSON.stringify({ name: studentName, status: "Present" })
         });
       } catch (err) {
-        logBox.innerHTML += `<div style="color:red">Failed to write to Google Sheet.</div>`;
+        logBox.innerHTML += `<div style="color:var(--danger)">Failed to update cloud sheet.</div>`;
       }
     }
 
