@@ -120,11 +120,23 @@
                                         .withFaceLandmarks()
                                         .withFaceDescriptors();
 
+        if (detections.length === 0) {
+          statusText.innerText = "No face detected in camera.";
+          return;
+        }
+
         for (const d of detections) {
           const match = faceMatcher.findBestMatch(d.descriptor);
-          if (match.label !== 'unknown' && !markedStudents.has(match.label)) {
-            markedStudents.add(match.label);
-            logAttendance(match.label);
+
+          if (match.label === 'unknown') {
+            statusText.innerText = "Face not recognized";
+          } else {
+            if (!markedStudents.has(match.label)) {
+              markedStudents.add(match.label);
+              logAttendance(match.label);
+            } else {
+              statusText.innerText = `Attendance already marked for ${match.label}`;
+            }
           }
         }
       }, 1500);
